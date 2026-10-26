@@ -1,4 +1,3 @@
-
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pathlib import Path
@@ -8,8 +7,7 @@ import os
 
 app = Flask(__name__)
 
-# For initial testing. Restrict this to your Netlify domain
-# after the website has been deployed.
+# Allow requests from Netlify
 CORS(app)
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -18,18 +16,31 @@ MODEL_PATH = BASE_DIR / "xgboost_quantity_model.pkl"
 model = joblib.load(MODEL_PATH)
 
 FEATURES = [
-    "Branch", "City", "Customer type", "Gender",
-    "Product line", "Unit price", "Payment",
-    "Month", "Day", "DayOfWeek", "Quarter", "Week"
+    "Branch",
+    "City",
+    "Customer type",
+    "Gender",
+    "Product line",
+    "Unit price",
+    "Payment",
+    "Month",
+    "Day",
+    "DayOfWeek",
+    "Quarter",
+    "Week"
 ]
 
 NUMERIC_FEATURES = [
-    "Unit price", "Month", "Day",
-    "DayOfWeek", "Quarter", "Week"
+    "Unit price",
+    "Month",
+    "Day",
+    "DayOfWeek",
+    "Quarter",
+    "Week"
 ]
 
 
-@app.get("/")
+@app.route("/")
 def home():
     return jsonify({
         "status": "online",
@@ -37,58 +48,87 @@ def home():
     })
 
 
-@app.get("/health")
+@app.route("/health")
 def health():
-    return jsonify({"status": "healthy"})
+    return jsonify({
+        "status": "healthy"
+    })
 
 
-@app.post("/predict")
+@app.route("/features")
+def features():
+    return jsonify({
+        "expected_features": FEATURES
+    })
+
+
+@app.route("/predict", methods=["POST"])
 def predict():
-    data = request.get_json(silent=True)
-
-    if not isinstance(data, dict):
-        return jsonify({"error": "Please send valid JSON."}), 400
-
-    missing = [col for col in FEATURES if col not in data]
-    if missing:
-        return jsonify({
-            "error": "Missing required features.",
-            "missing_features": missing
-        }), 400
 
     try:
-        row = {col: data[col] for col in FEATURES}
 
-        for col in NUMERIC_FEATURES:
-            row[col] = float(row[col])
+        data = request.get_json(silent=True)
 
-        if not all(
-            pd.notna(row[col]) for col in NUMERIC_FEATURES
-        ):
+        if not isinstance(data, dict):
             return jsonify({
-                "error": "Numeric features must be valid numbers."
+                "error": "Please send valid JSON."
             }), 400
 
-        input_df = pd.DataFrame([row], columns=FEATURES)
-        prediction = float(model.predict(input_df)[0])
+        missing = [
+            feature
+            for feature in FEATURES
+            if feature not in data
+        ]
+
+        if missing:
+            return jsonify({
+                "error": "Missing required features.",
+                "missing_features": missing
+            }), 400
+
+        row = {
+            feature: data[feature]
+            for feature in FEATURES
+        }
+
+        # Convert numeric fields
+        for feature in NUMERIC_FEATURES:
+            row[feature] = float(row[feature])
+
+        input_df = pd.DataFrame(
+            [row],
+            columns=FEATURES
+        )
+
+        print("\n========== REQUEST RECEIVED ==========")
+        print(input_df)
+        print("\nCOLUMN TYPES")
+        print(input_df.dtypes)
+
+        prediction = model.predict(input_df)
+
+        predicted_quantity = float(prediction[0])
 
         return jsonify({
-            "predicted_quantity": round(prediction, 2)
+            "predicted_quantity": round(
+                predicted_quantity,
+                2
+            ),
+            "status": "success"
         })
 
-    except (TypeError, ValueError, OverflowError):
-        return jsonify({
-            "error": "Check that all numeric inputs are valid."
-        }), 400
+    except Exception as e:
 
-    except Exception:
-        app.logger.exception("Prediction error")
+        print("\n========== ERROR ==========")
+        print(str(e))
+
         return jsonify({
-            "error": "The model could not generate a prediction."
+            "error": str(e)
         }), 500
 
 
 if __name__ == "__main__":
+
     app.run(
         host="0.0.0.0",
         port=int(os.environ.get("PORT", 10000))
